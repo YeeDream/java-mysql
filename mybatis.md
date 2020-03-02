@@ -50,6 +50,118 @@
 ⑧Executor 通过反射将数据转换成 POJO 并返回给 SqlSession。
 将数据返回给调用者。
 
+
+3.手动映射和自动映射
+  
+  (1)在MyBatis中，自动映射有三种模式，分别是NONE,PARTIAL,FULL。其中NONE表示不启用自动映射，PARTIAL表示只对非嵌套的resultMap进行自动映射，FULL表示只对所有的resultMap都进行自动映射。默认的自动映射模式为PARTIAL。
+  
+   在MyBatis的核心文件中<settings>节点下添加如下节点来控制自动映射的方式：
+  
+   
+```
+<setting name="autoMappingBehavior" value="PARTIAL"/>
+```
+
+(2)手动映射，当表中的字段和实体类中的属性名称不相同的时候，自动映射机制不能映射成功，需要手动将二者进行关联
+
+
+```
+<resultMap id="唯一的标识" type="映射的pojo对象">
+  <id column="表的主键字段，或者可以为查询语句中的别名字段" jdbcType="字段类型" property="映射pojo对象的主键属性" /> 
+  <result column="表的一个字段（可以为任意表的一个字段）" jdbcType="字段类型" property="映射到pojo对象的一个属性（须为type定义的pojo对象中的一个属性）"/>
+</resultMap>
+```
+
+ 当进行手动映射之后，select之类的标签，resultTypep将更改为resultMap。
+
+```
+  <select id="getById"  resultMap="resultMap的唯一的标识"></select>
+```
+
+4.会话工厂和会话
+ 
+ (1)会话工厂类
+        
+①目的：如果每一次的CRUD操作都需要读取MyBatis的核心配置文件，这样就会造成资源的浪费。可以将打开数据库连接的方法编写成一个工具类，在Dao中就可以直接调用。
+        
+②设计思路：如果每一次都需要创建一个工厂类对象，也会造成资源的浪费。解决的方法就是将把这个工厂类设计成单例模式。
+
+③单例模式：保证一个类只有一个实例，并且可以全局访问。
+           
+        A.私有化静态类对象，类加载的那一刻，就进行实例化
+          
+        B.私有化构造方法，确保该类不会被外部进行实例化操作。在里面初始化MyBatis
+           的配置
+           
+        C.创建一个公共静态方法，用于获得类对象。GetLnstance()用于获得SqlSession对象，MyBatis支持手动提交事务，这里设置成false。
+    
+(2)会话
+        
+①SQL会话工厂构造器类SqlSessionFactoryBuilder的build方法用于构建SqlSessionFactory类的实例；
+
+②SQL会话工厂类的实例用于创建sql会话SQLSession的实例；
+    
+③SQL会话SqlSession用于执行具体的CRUD操作，其类似于JDBC中连接类Connection;
+        
+④SQL会话模板SqlSessionTemplate是MyBatis为Spring提供的模板化的会话工具，是现场安全的，可以通过构造器或setter方法注入SqlSessionFactory类的实例。  
+    
+5.MyBatis的事务
+     
+A.MyBatis管理事务分为两种方式：
+      
+(1)使用JDBC的事务管理机制，就是利用java.sql.Connection对象完成对事务的提交；
+    
+(2)使用MANAGED的事务管理机制，这种机制MyBatis自身不会去实现事务管理，而是让程序的容器(JBOSS,WebLogic)来实现对事务的管理。
+      
+B.MyBatis事务遇到的问题
+      
+(1)如果开启MyBatis事务管理，则需要手动进行事务提交，否则事务会回滚到原状态；
+
+(2)如果在；只有执行了具体操作执行完后不通过sqlSession.commit()方法进行提交，事务在sqlSession关闭时会自动回滚到原状态commit()事务提交方法才会真正完成操作；
+      
+(3)如果不执行sqlSession.commit()操作，直接执行sqlSession.close()，则会在close()进行事务回滚；
+      
+(4)如果不执行sqlSession.commit()操作也不手动关闭sqlSession,在程序结束时关闭数据库连接时会进行事务回滚。
+
+C.事务管理入口
+      
+在XML配置文件中定义事务工厂类型，JDBC或者MANAGED分别对应JdbcTransactionFactory.class和ManagedTransactionFactory.class;
+     
+(1)如果type=”JDBC”则使用JdbcTransactionFactory事务工厂则MyBatis独立管理事务，直接使用JDK提供的JDBC来管理事务的各个环节：提交、回滚、关闭等操作；
+      
+(2)如果type=”MANAGED”则使用ManagedTransactionFactory事务工厂则MyBatis不在ORM层管理事务而是将事务管理托付给其他框架，如Spring；
+      
+D.事务对update操作的影响
+
+事务的提交：
+        
+- [x]        在sqlSession中执行了update操作，需要执行sqlSession.commit()方法提交事务，不然在连接关闭时候自动回滚；
+        
+- [x] exector.commit()事务提交方法归根结底到底是调用了transaction.commit()事务的提交方法；
+     
+- [x] 如果是jdbcTransaction的commit()方法，通过调用connection.commit()方法通过数据库连接实现事务提交；
+        
+- [x] 如果是ManagedTransaction的commit()方法，则为空方法不进行任何操作；
+        事物的回滚：
+    
+- [x] sqlSession执行close()关闭操作时，如果close()操作之前进行了update操作未进行commit()事务提交则会进行事务回滚然后再关闭会话；如果update后执行了commit则直接关闭会话；
+      
+      
+E.事务对select的影响
+        
+事务对select操作的影响主要体现在对缓存的影响上，主要包括一级缓存和二级缓存。
+     
+总结：
+ 
+(1)MyBatis可以通过xml配置是否独立处理事务，可以选择不单独处理事务，将事务托管给其它上层框架如spring等；
+
+(2)如果MyBatis选择处理事务则事务会对数据库操作产生影响
+            
+        ①对update操作的影响主要体现在update操作没有进行事务提交则会话关闭时进行数据库回滚；
+           
+        ②对select操作的影响主要表现在二级缓存上，执行select操作后如果未进行事务提交则缓存会被放在临时缓存中，后续的select操作无法使用该缓存，直到进行commit()事务提交，临时缓存中的数据才会被正式转移到正式缓存中。
+
+
 三．多表之间的关系
 ----------
 
